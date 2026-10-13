@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+# Resolve the script's directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Load configuration from .fsc_config (use FSC_CONFIG_FILE if set)
+CONFIG_FILE="${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    echo "Configuration file not found. Running default settings..."
+    "$SCRIPT_DIR/settings"
+    source "$CONFIG_FILE"
+fi
+
+cd "$PROJECT_ROOT"
+
+
+# Build base cmake command
+CMAKE_ARGS=(
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    -DENABLE_TESTS="$ENABLE_TESTS"
+    -DSANITIZERS="$SANITIZERS"
+    -DENABLE_LTO="$ENABLE_LTO"
+    -DBUILD_SHARED_LIBS="$BUILD_SHARED_LIBS"
+    -DWARNINGS_LEVEL="$WARNINGS_LEVEL"
+    -DTREAT_WARNINGS_AS_ERRORS="$TREAT_WARNINGS_AS_ERRORS"
+    -DGRAPHICS_API="$GRAPHICS_API"
+    -DWINDOW_API="$WINDOW_API"
+)
+
+
+if [ -n "$CMAKE_EXTRA_FLAGS" ]; then
+    # Split the string into words and add to array
+    read -r -a EXTRA_ARGS <<< "$CMAKE_EXTRA_FLAGS"
+    CMAKE_ARGS+=("${EXTRA_ARGS[@]}")
+fi
+
+# Run CMake configuration
+cmake "${CMAKE_ARGS[@]}" -B build -G "$BUILD_SYSTEM"

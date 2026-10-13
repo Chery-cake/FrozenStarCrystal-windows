@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+# Resolve the script's directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Use FSC_CONFIG_FILE if set, otherwise default to $DIRENV_DIR/.fsc_config
+CONFIG_FILE="${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
+
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+fi
+
+# Resolve the script's directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Ensure the build directory is configured; if not, run build first
+if [ ! -f "$PROJECT_ROOT/build/CMakeCache.txt" ]; then
+    echo "Build directory not configured. Running build script first..."
+    "$SCRIPT_DIR/build"
+fi
+
+# Maximum number of cores available
+MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+CORES="$MAX_CORES"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --cores)
+        CORES="$2"
+        shift 2
+        ;;
+    --target)
+        TARGET="$2"
+        shift 2
+        ;;
+    *)
+        echo "Unknown option: $1" >&2
+        echo "Usage: compile [--cores N] [--target name]"
+        exit 1
+        ;;
+    esac
+done
+
+# Clamp cores to maximum
+if [ "$CORES" -gt "$MAX_CORES" ]; then
+    echo "Warning: requested $CORES cores, but only $MAX_CORES available. Using $MAX_CORES."
+    CORES="$MAX_CORES"
+fi
+
+# Build command
+BUILD_CMD=(cmake --build "$PROJECT_ROOT/build" --parallel "$CORES")
+if [ -n "$TARGET" ]; then
+    BUILD_CMD+=(--target "$TARGET")
+fi
+
+echo "Running: ${BUILD_CMD[*]}"
+"${BUILD_CMD[@]}"

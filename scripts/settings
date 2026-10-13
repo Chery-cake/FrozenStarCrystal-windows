@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+
+# Resolve the script's directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Use FSC_CONFIG_FILE if set, otherwise default to $DIRENV_DIR/.fsc_config
+CONFIG_FILE="${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
+
+if [ -z "$CONFIG_FILE" ]; then
+    echo "ERROR: FSC_CONFIG_FILE not set."
+    exit 1
+fi
+
+# If no config file exists, create a default one
+if [ ! -f "$CONFIG_FILE" ]; then
+    cat > "$CONFIG_FILE" <<'EOF'
+BUILD_SYSTEM="Ninja"
+BUILD_TYPE="Debug"
+ENABLE_TESTS="ON"
+SANITIZERS="address,undefined"
+ENABLE_LTO="ON"
+BUILD_SHARED_LIBS="ON"
+WARNINGS_LEVEL=2
+TREAT_WARNINGS_AS_ERRORS="OFF"
+GRAPHICS_API="vulkan"
+APP_NAME="Engine"
+APP_VERSION_MAJOR=0
+APP_VERSION_MINOR=0
+APP_VERSION_PATCH=0
+WINDOW_API="sdl"
+CMAKE_EXTRA_FLAGS=""
+EOF
+    echo "Created default config at $CONFIG_FILE"
+fi
+
+initial_args=$#
+
+# Parse new values
+declare -A new
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --build-system)        new[BUILD_SYSTEM]="$2"; shift 2 ;;
+    --build-type)          new[BUILD_TYPE]="$2"; shift 2 ;;
+    --tests)               new[ENABLE_TESTS]="$2"; shift 2 ;;
+    --sanitizers)          new[SANITIZERS]="$2"; shift 2 ;;
+    --lto)                 new[ENABLE_LTO]="$2"; shift 2 ;;
+    --build-shared-libs)   new[BUILD_SHARED_LIBS]="$2"; shift 2 ;;
+    --warnings-level)      new[WARNINGS_LEVEL]="$2"; shift 2 ;;
+    --warnings-as-errors)  new[TREAT_WARNINGS_AS_ERRORS]="$2"; shift 2 ;;
+    --graphics-api)                 new[GRAPHICS_API]="$2"; shift 2 ;;
+    --app-name)            new[APP_NAME]="$2"; shift 2 ;;
+    --app-version-major)   new[APP_VERSION_MAJOR]="$2"; shift 2 ;;
+    --app-version-minor)   new[APP_VERSION_MINOR]="$2"; shift 2 ;;
+    --app-version-patch)   new[APP_VERSION_PATCH]="$2"; shift 2 ;;
+    --window-api)   new[WINDOW_API]="$2"; shift 2 ;;
+    --cmake-extra-flags)  new[CMAKE_EXTRA_FLAGS]="$2"; shift 2 ;;
+    *)
+        echo "Unknown option: $1" >&2
+        echo "Usage: settings [--build-system Ninja] [--build-type Release|Debug] [--tests ON|OFF] [--sanitizers address,leak,thread,undefined,memory|\"\"] [--lto ON|OFF] [--build-shared-libs ON|OFF] [--warnings-level 0|1|2] [--warnings-as-errors ON|OFF] [--graphics-api vulkan] [--app-name name] [--app-version-(major|minor|patch) 0|(version number)] [--window-api sdl] [--cmake-extra-flags \"\"]" >&2
+        exit 1
+        ;;
+    esac
+done
+
+# Load existing config to preserve other keys
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+fi
+
+# Override with newly supplied values
+for key in "${!new[@]}"; do
+    declare "$key=${new[$key]}"
+done
+
+# Write the config file
+true > "$CONFIG_FILE"
+for var in BUILD_SYSTEM BUILD_TYPE ENABLE_TESTS SANITIZERS ENABLE_LTO BUILD_SHARED_LIBS \
+            WARNINGS_LEVEL TREAT_WARNINGS_AS_ERRORS GRAPHICS_API APP_NAME APP_VERSION_MAJOR \
+            APP_VERSION_MINOR APP_VERSION_PATCH WINDOW_API CMAKE_EXTRA_FLAGS; do
+    printf "export %s='%s'\n" "$var" "${!var}" >> "$CONFIG_FILE"
+done
+
+if [ $initial_args -ne 0 ]; then
+    echo "Settings written to $CONFIG_FILE"
+fi
+
+# Print current settings
+source "$CONFIG_FILE"
+echo "Current settings (from $CONFIG_FILE):"
+echo "  BUILD_SYSTEM             = $BUILD_SYSTEM"
+echo "  BUILD_TYPE               = $BUILD_TYPE"
+echo "  ENABLE_TESTS             = $ENABLE_TESTS"
+echo "  SANITIZERS               = $SANITIZERS"
+echo "  ENABLE_LTO               = $ENABLE_LTO"
+echo "  BUILD_SHARED_LIBS        = $BUILD_SHARED_LIBS"
+echo "  WARNINGS_LEVEL           = $WARNINGS_LEVEL"
+echo "  TREAT_WARNINGS_AS_ERRORS = $TREAT_WARNINGS_AS_ERRORS"
+echo "  GRAPHICS_API             = $GRAPHICS_API"
+echo "  APP_NAME                 = $APP_NAME"
+echo "  APP_VERSION_MAJOR        = $APP_VERSION_MAJOR"
+echo "  APP_VERSION_MINOR        = $APP_VERSION_MINOR"
+echo "  APP_VERSION_PATCH        = $APP_VERSION_PATCH"
+echo "  WINDOW_API               = $WINDOW_API"
+echo "  CMAKE_EXTRA_FLAGS        = $CMAKE_EXTRA_FLAGS"

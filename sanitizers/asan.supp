@@ -1,0 +1,66 @@
+# ==============================================================================
+# AddressSanitizer Suppression File
+# ==============================================================================
+# This file lists known issues that should be ignored during testing.
+# These are typically from third-party libraries or system components.
+#
+# Format:
+#   interceptor_via_fun:<function_name_pattern>
+#   interceptor_via_lib:<library_name_pattern>
+#
+# Wildcards (*) can be used in patterns.
+# ==============================================================================
+
+# ==============================================================================
+# Wayland Libraries
+# ==============================================================================
+interceptor_via_lib:libwayland-client*
+interceptor_via_lib:libwayland-server*
+interceptor_via_lib:libwayland-cursor*
+interceptor_via_lib:libwayland-egl*
+
+# ==============================================================================
+# X11/XCB Libraries
+# ==============================================================================
+interceptor_via_lib:libX11*
+interceptor_via_lib:libxcb*
+
+# ==============================================================================
+# Font Libraries
+# ==============================================================================
+interceptor_via_lib:libfreetype*
+interceptor_via_lib:libfontconfig*
+interceptor_via_lib:libharfbuzz*
+interceptor_via_lib:libpango*
+
+# ==============================================================================
+# SDL Libraries
+# ==============================================================================
+interceptor_via_lib:libSDL3*
+interceptor_via_lib:libSDL3_image*
+interceptor_via_lib:libSDL3_ttf*
+
+# ==============================================================================
+# Graphics Driver Libraries
+# ==============================================================================
+interceptor_via_lib:libvulkan*
+interceptor_via_lib:libGL*
+interceptor_via_lib:libEGL*
+interceptor_via_lib:libmesa*
+interceptor_via_lib:libnvidia*
+interceptor_via_lib:libdrm*
+
+# ==============================================================================
+# Audio Libraries
+# ==============================================================================
+interceptor_via_lib:libpulse*
+interceptor_via_lib:libpipewire*
+interceptor_via_lib:libasound*
+
+# ==============================================================================
+# System Libraries
+# ==============================================================================
+interceptor_via_lib:libglib*
+interceptor_via_lib:libdbus*
+interceptor_via_lib:libssl*
+interceptor_via_lib:libcrypto*

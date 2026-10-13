@@ -1,0 +1,198 @@
+# ==============================================================================
+# LeakSanitizer Suppression File
+# ==============================================================================
+# This file lists known memory leaks that should be ignored during testing.
+# These are typically from third-party libraries or system components that
+# are known to have benign leaks.
+#
+# Format:
+#   leak:<function_name_pattern>
+#   leak:<module_name_pattern>
+#
+# Wildcards (*) can be used in patterns.
+# ==============================================================================
+
+# ==============================================================================
+# Wayland Display Server Leaks
+# ==============================================================================
+# Wayland libraries have some known leaks that are handled internally
+leak:libwayland-client*
+leak:libwayland-server*
+leak:libwayland-cursor*
+leak:libwayland-egl*
+leak:wl_display_connect
+leak:wl_display_create
+leak:wl_proxy_create
+leak:wl_proxy_marshal_constructor
+leak:wl_registry_bind
+leak:wl_shm_pool_create_buffer
+leak:wl_cursor_theme_load
+
+# Wayland XDG shell
+leak:xdg_wm_base*
+leak:xdg_surface*
+leak:xdg_toplevel*
+
+# ==============================================================================
+# X11/XCB Display Server Leaks (for X11 compatibility)
+# ==============================================================================
+leak:libX11*
+leak:libxcb*
+leak:XOpenDisplay
+leak:XInternAtom
+leak:XCreateWindow
+leak:xcb_connect
+
+# ==============================================================================
+# Font Rendering Libraries
+# ==============================================================================
+# FreeType font library
+leak:libfreetype*
+leak:FT_Init_FreeType
+leak:FT_New_Face
+leak:FT_Load_Glyph
+leak:FT_Get_Char_Index
+leak:FT_Render_Glyph
+
+# Fontconfig library
+leak:libfontconfig*
+leak:FcInit
+leak:FcConfigCreate
+leak:FcPatternCreate
+leak:FcFontMatch
+leak:FcFontList
+leak:FcConfigGetCurrent
+leak:FcConfigSubstitute
+leak:FcDefaultSubstitute
+
+# HarfBuzz text shaping
+leak:libharfbuzz*
+leak:hb_buffer_create
+leak:hb_font_create
+leak:hb_shape
+
+# Pango text layout
+leak:libpango*
+leak:pango_font_map_create_context
+leak:pango_context_new
+
+# ==============================================================================
+# SDL Libraries
+# ==============================================================================
+leak:libSDL3*
+leak:SDL_Init
+leak:SDL_CreateWindow
+leak:SDL_CreateRenderer
+leak:SDL_GL_CreateContext
+leak:SDL_Vulkan_CreateSurface
+
+# SDL_image
+leak:libSDL3_image*
+leak:IMG_Load
+leak:IMG_Init
+
+# SDL_ttf
+leak:libSDL3_ttf*
+leak:TTF_Init
+leak:TTF_OpenFont
+
+# ==============================================================================
+# Vulkan and Graphics Drivers
+# ==============================================================================
+# Vulkan loader
+leak:libvulkan*
+leak:vkCreateInstance
+leak:vkCreateDevice
+leak:vkEnumeratePhysicalDevices
+leak:vkGetInstanceProcAddr
+leak:vkGetDeviceProcAddr
+
+# Mesa drivers
+leak:libmesa*
+leak:libGL*
+leak:libEGL*
+leak:libGLX*
+leak:libGLESv2*
+
+# NVIDIA drivers
+leak:libnvidia*
+leak:nvidia*
+
+# AMD drivers
+leak:libamd*
+leak:libdrm_amdgpu*
+
+# Intel drivers
+leak:libi915*
+leak:libdrm_intel*
+
+# Generic DRM/KMS
+leak:libdrm*
+leak:drmModeGetResources
+
+# ==============================================================================
+# Audio Libraries
+# ==============================================================================
+# PulseAudio
+leak:libpulse*
+leak:pa_context_new
+leak:pa_threaded_mainloop_new
+
+# PipeWire
+leak:libpipewire*
+leak:pw_init
+leak:pw_context_new
+
+# ALSA
+leak:libasound*
+leak:snd_pcm_open
+leak:snd_mixer_open
+
+# ==============================================================================
+# System Libraries
+# ==============================================================================
+# GLib/GObject
+leak:libglib*
+leak:libgobject*
+leak:libgio*
+leak:g_type_init
+leak:g_main_context_new
+
+# D-Bus
+leak:libdbus*
+leak:dbus_connection_open
+
+# OpenSSL/TLS
+leak:libssl*
+leak:libcrypto*
+leak:SSL_CTX_new
+leak:SSL_new
+
+# zlib compression
+leak:libz*
+leak:deflateInit
+
+# ==============================================================================
+# C++ Runtime
+# ==============================================================================
+# GCC libstdc++
+leak:libstdc++*
+
+# LLVM libc++
+leak:libc++*
+
+# Thread-local storage
+leak:__cxa_thread_atexit_impl
+
+# ==============================================================================
+# Slang Library
+# ==============================================================================
+# Slang compiler
+leak:libslang-compiler*
+
+# ==============================================================================
+# Known Engine Internal Leaks (to be fixed)
+# ==============================================================================
+# Add any known engine leaks here that are being tracked for fixing
+# Example:
+# leak:SapphireEngine::SomeLeakyFunction
