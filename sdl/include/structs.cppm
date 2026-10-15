@@ -20,7 +20,7 @@ enum class Priority : uint8_t {
 // ── Task wrapper ─────────────────────────────────────────────
 // Same shape as graphics::vulkan::devices::GPUTask so the Priority queue
 // can treat it uniformly: public `task` member + public `priority`.
-struct WindowTask {
+struct FROZENSTARCRYSTAL_WINDOWS_API WindowTask {
   concurrency::queues::Task task;
   Priority priority{Priority::Background};
 };
@@ -34,7 +34,7 @@ struct WindowTask {
 //
 // `epoch` is per-pool-instance (each ThreadPool owns its own policy object),
 // which is fine: scores are only compared within a pool.
-struct WindowTaskPolicy {
+struct FROZENSTARCRYSTAL_WINDOWS_API WindowTaskPolicy {
   using Score = int64_t;
 
   static constexpr int64_t promotion_per_second = 8;

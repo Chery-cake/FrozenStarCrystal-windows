@@ -14,7 +14,21 @@ SwapchainRenderTarget::SwapchainRenderTarget(
     throw std::logic_error(
         "[SwapchainRenderTarget] WindowInfo/swapchain not initialized");
   }
+
+  const auto &qfi = device_->getQueueFamilies();
+  if (!qfi.hasGraphics()) {
+    throw std::runtime_error(
+        "[SwapchainRenderTarget] device has no graphics queue");
+  }
+  queueFamily_ = qfi.graphicsQueue.value();
+
   createImageViews();
+}
+
+SwapchainRenderTarget::~SwapchainRenderTarget() {
+  if (device_ && cmdPool_) {
+    device_->waitIdle();
+  }
 }
 
 void SwapchainRenderTarget::createImageViews() {
@@ -47,15 +61,34 @@ void SwapchainRenderTarget::createImageViews() {
                         });
 }
 
-void SwapchainRenderTarget::releasePendingCommands() {
-  if (pendingCmds_.empty()) {
+void SwapchainRenderTarget::ensureCommandPool() {
+  if (cmdPool_) {
+    return;
+  }
+  cmdPool_ = std::make_unique<graphics::vulkan::devices::CommandBufferPool>(
+      device_->getDevicePtr(), graphics::vulkan::devices::CommandPoolCreateInfo{
+                                   .queueFamily = queueFamily_});
+}
+
+void SwapchainRenderTarget::releaseSlotCommand(uint32_t slot) {
+  if (!cmdPool_ || slot >= pendingCmds_.size() || !pendingCmds_[slot]) {
     return;
   }
 
-  auto &pool = device_->getGraphicsPool();
-  std::ranges::for_each(pendingCmds_, [&pool](auto &cmd) {
-    pool.releasePrimary(std::move(cmd));
-  });
+  cmdPool_->releasePrimary(std::move(*pendingCmds_[slot]));
+  pendingCmds_[slot].reset();
+}
+
+void SwapchainRenderTarget::releaseAllCommands() {
+  if (!cmdPool_) {
+    return;
+  }
+  for (auto &slot : pendingCmds_) {
+    if (slot) {
+      cmdPool_->releasePrimary(std::move(*slot));
+      slot.reset();
+    }
+  }
   pendingCmds_.clear();
 }
 
@@ -69,8 +102,13 @@ SwapchainRenderTarget::beginFrame() {
 
   auto &sc = *windowInfo_->swapchain;
   if (sc.needRecreation()) {
-    return fc;
+    recreate();
+    if (sc.needRecreation()) {
+      return fc;
+    }
   }
+
+  ensureCommandPool();
 
   auto acq = sc.acquireNextImage();
   if (!acq) {
@@ -81,7 +119,12 @@ SwapchainRenderTarget::beginFrame() {
     return fc;
   }
 
-  releasePendingCommands();
+  const uint32_t slot = sc.currentFrameSlot();
+  if (slot >= pendingCmds_.size()) {
+    pendingCmds_.resize(slot + 1);
+  }
+  releaseSlotCommand(slot);
+  activeSlot_ = slot;
 
   const uint32_t imageIndex = *acq;
   auto data = sc.getSwapchainImageData(imageIndex);
@@ -90,14 +133,11 @@ SwapchainRenderTarget::beginFrame() {
   }
 
   if (imageIndex >= imageViews_.size() || !imageViews_[imageIndex]) {
-    createImageViews();
-    if (imageIndex >= imageViews_.size() || !imageViews_[imageIndex]) {
-      return fc;
-    }
+    sc.markForRecreation();
+    return fc;
   }
 
-  auto &pool = device_->getGraphicsPool();
-  vk::raii::CommandBuffer cmdRaii = pool.acquirePrimary();
+  vk::raii::CommandBuffer cmdRaii = cmdPool_->acquirePrimary();
   vk::CommandBuffer cmd = *cmdRaii;
 
   cmd.begin(vk::CommandBufferBeginInfo{
@@ -140,7 +180,7 @@ SwapchainRenderTarget::beginFrame() {
   currentImage_ = data->image;
   currentIndex_ = imageIndex;
 
-  pendingCmds_.push_back(std::move(cmdRaii));
+  pendingCmds_[slot] = std::move(cmdRaii);
   return fc;
 }
 
@@ -172,7 +212,8 @@ void SwapchainRenderTarget::endFrame(
 
   auto queue = device_->getGraphicsQueue();
   auto res = windowInfo_->swapchain->submitAndPresent(
-      queue, std::span<vk::SubmitInfo>(&submit, 1), fc.imageIndex);
+      {.queue = queue, .family = queueFamily_},
+      std::span<vk::SubmitInfo>(&submit, 1), fc.imageIndex);
 
   if (!res) {
     using Code = graphics::vulkan::devices::Swapchain::PresentError::Code;
@@ -201,12 +242,17 @@ void SwapchainRenderTarget::recreate() {
     return;
   }
 
+  if (device_) {
+    device_->waitIdle();
+  }
+
   // Command buffers reference the old image views; drop them.
-  pendingCmds_.clear();
+  releaseAllCommands();
   imageViews_.clear();
 
   const auto info = windowInfo_->swapchain->getinfo();
   // If the surface reports currentExtent, the passed dimensions are ignored.
+  // TODO it could deadlock for locking swapchain mtx outside of a swapchain
   windowInfo_->swapchain->recreateSwapchain(info.extent.width,
                                             info.extent.height);
 

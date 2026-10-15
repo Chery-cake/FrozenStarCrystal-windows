@@ -156,8 +156,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${GENERATED_INCLUDE_DIR}
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    FrozenStarCrystal-core
+target_link_libraries(${PROJECT_NAME} PUBLIC
     FrozenStarCrystal-graphics
 )
 

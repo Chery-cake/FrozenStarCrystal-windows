@@ -20,15 +20,29 @@ private:
   uint32_t currentIndex_ = 0;
   std::array<float, 4> defaultClearColor_ = {0.0f, 0.0f, 0.0f, 1.0f};
 
-  std::vector<vk::raii::CommandBuffer> pendingCmds_;
+  uint32_t queueFamily_{0};
+  std::unique_ptr<graphics::vulkan::devices::CommandBufferPool> cmdPool_;
+
+  std::vector<std::optional<vk::raii::CommandBuffer>> pendingCmds_;
+  // Which slot beginFrame() armed for the current frame.
+  uint32_t activeSlot_ = 0;
 
   void createImageViews();
-  void releasePendingCommands();
+  void ensureCommandPool();
+
+  void releaseSlotCommand(uint32_t slot);
+  void releaseAllCommands();
 
 public:
   SwapchainRenderTarget(
       const std::shared_ptr<graphics::vulkan::devices::WindowInfo> &win,
       const std::shared_ptr<graphics::vulkan::devices::Device> &dev);
+  ~SwapchainRenderTarget();
+
+  SwapchainRenderTarget(const SwapchainRenderTarget &) = delete;
+  SwapchainRenderTarget &operator=(const SwapchainRenderTarget &) = delete;
+  SwapchainRenderTarget(SwapchainRenderTarget &&) noexcept = default;
+  SwapchainRenderTarget &operator=(SwapchainRenderTarget &&) noexcept = default;
 
   graphics::vulkan::compositors::FrameContext beginFrame();
   void endFrame(graphics::vulkan::compositors::FrameContext &fc);
