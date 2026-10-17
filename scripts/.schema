@@ -1,0 +1,8 @@
+PROJECT_SCHEMA=(
+    "GRAPHICS_API|vulkan|Graphics API backend (vulkan, opengl, ...)|YES"
+    "WINDOW_API|sdl|Window API backend (sdl, glfw, ...)|YES"
+    "APP_NAME|Engine|Application name|YES"
+    "APP_VERSION_MAJOR|0|Major version|YES"
+    "APP_VERSION_MINOR|0|Minor version|YES"
+    "APP_VERSION_PATCH|0|Patch version|YES"
+)

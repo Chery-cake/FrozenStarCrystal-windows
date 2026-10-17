@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Generate a cross-compilation toolchain file into build/toolchains/<platform>.cmake
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+PLATFORM="${1:-}"
+if [ -z "$PLATFORM" ]; then
+    cat >&2 <<EOF
+Usage: scripts/toolchain <platform> [output]
+
+Platforms:
+  linux-x86_64    linux-aarch64    linux-armv7
+  windows-x86_64  windows-i686
+  macos-x86_64    macos-arm64
+
+Example:
+  scripts/toolchain linux-aarch64
+  cmake -B build-aarch64 -DCMAKE_TOOLCHAIN_FILE=build/toolchains/linux-aarch64.cmake
+EOF
+    exit 1
+fi
+
+OUTPUT="${2:-$PROJECT_ROOT/build/toolchains/${PLATFORM}.cmake}"
+
+cmake \
+    -DTC_PLATFORM="$PLATFORM" \
+    -DTC_OUTPUT="$OUTPUT" \
+    -P "$PROJECT_ROOT/cmake/GenerateToolchain.cmake"

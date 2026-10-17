@@ -1,41 +1,122 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Resolve the script's directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-# Load configuration from .fsc_config (use FSC_CONFIG_FILE if set)
 CONFIG_FILE="${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-else
-    echo "Configuration file not found. Running default settings..."
-    "$SCRIPT_DIR/settings"
-    source "$CONFIG_FILE"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "No config found — generating defaults..."
+    "$SCRIPT_DIR/settings" >/dev/null
 fi
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
 
 cd "$PROJECT_ROOT"
 
+# ---------------------------------------------------------------------------
+# CLI (overrides config for this one invocation)
+# ---------------------------------------------------------------------------
+CLI_TOOLCHAIN=""
+CLI_TOOLCHAIN_SET=0
+BUILD_DIR_OVERRIDE=""
+FORCE_FRESH=0
 
-# Build base cmake command
-CMAKE_ARGS=(
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
-    -DENABLE_TESTS="$ENABLE_TESTS"
-    -DSANITIZERS="$SANITIZERS"
-    -DENABLE_LTO="$ENABLE_LTO"
-    -DBUILD_SHARED_LIBS="$BUILD_SHARED_LIBS"
-    -DWARNINGS_LEVEL="$WARNINGS_LEVEL"
-    -DTREAT_WARNINGS_AS_ERRORS="$TREAT_WARNINGS_AS_ERRORS"
-    -DGRAPHICS_API="$GRAPHICS_API"
-    -DWINDOW_API="$WINDOW_API"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --toolchain)  CLI_TOOLCHAIN="$2"; CLI_TOOLCHAIN_SET=1; shift 2 ;;
+        --build-dir)  BUILD_DIR_OVERRIDE="$2"; shift 2 ;;
+        --force)      FORCE_FRESH=1; shift ;;
+        --help|-h)
+            cat <<EOF
+Usage: scripts/build [--toolchain <platform>] [--build-dir <path>] [--force]
+
+  --toolchain <platform>  Override TOOLCHAIN for this invocation.
+  --build-dir <path>      Explicit build directory.
+  --force                 Force a fresh configure (ignore cached cache values).
+EOF
+            exit 0
+            ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Resolve effective toolchain + build dir
+# ---------------------------------------------------------------------------
+EFFECTIVE_TOOLCHAIN="${TOOLCHAIN:-}"
+[ $CLI_TOOLCHAIN_SET -eq 1 ] && EFFECTIVE_TOOLCHAIN="$CLI_TOOLCHAIN"
+
+if [ -n "$BUILD_DIR_OVERRIDE" ]; then
+    BUILD_DIR="$BUILD_DIR_OVERRIDE"
+elif [ -n "$EFFECTIVE_TOOLCHAIN" ]; then
+    BUILD_DIR="$PROJECT_ROOT/build-$EFFECTIVE_TOOLCHAIN"
+else
+    BUILD_DIR="$PROJECT_ROOT/build"
+fi
+
+# ---------------------------------------------------------------------------
+# Figure out which config vars are script-only (FORWARD=NO) so we don't pass
+# them as -D<VAR>=... to CMake. Extracted dynamically from settings + .schema.
+# ---------------------------------------------------------------------------
+SCRIPT_ONLY=()
+for src in "$SCRIPT_DIR/settings" "$SCRIPT_DIR/.schema"; do
+    [ -f "$src" ] || continue
+    while IFS='|' read -r var _ _ forward; do
+        [ "$forward" = "NO" ] && SCRIPT_ONLY+=("$var")
+    done < <(sed -n 's/^ *"\([A-Z_][A-Z0-9_]*\)|\([^|]*\)|\([^|]*\)|\([A-Z]*\)".*/\1|\2|\3|\4/p' "$src")
+done
+
+_is_script_only() {
+    local v="$1"
+    for s in "${SCRIPT_ONLY[@]}"; do [ "$s" = "$v" ] && return 0; done
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Assemble -D args from the config file (except script-only vars)
+# ---------------------------------------------------------------------------
+declare -A CMAKE_NAME_MAP=(
+    [BUILD_TYPE]=CMAKE_BUILD_TYPE
 )
 
+CMAKE_ARGS=()
+while read -r var; do
+    _is_script_only "$var" && continue
+    cmake_var="${CMAKE_NAME_MAP[$var]:-$var}"
+    CMAKE_ARGS+=("-D${cmake_var}=${!var}")
+done < <(sed -n 's/^export \([A-Z_][A-Z0-9_]*\)=.*/\1/p' "$CONFIG_FILE")
 
-if [ -n "$CMAKE_EXTRA_FLAGS" ]; then
-    # Split the string into words and add to array
+# ---------------------------------------------------------------------------
+# Toolchain
+# ---------------------------------------------------------------------------
+if [ -n "$EFFECTIVE_TOOLCHAIN" ]; then
+    TOOLCHAIN_FILE="$BUILD_DIR/toolchains/${EFFECTIVE_TOOLCHAIN}.cmake"
+    mkdir -p "$(dirname "$TOOLCHAIN_FILE")"
+    "$SCRIPT_DIR/toolchain" "$EFFECTIVE_TOOLCHAIN" "$TOOLCHAIN_FILE" >/dev/null
+    CMAKE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE")
+fi
+
+# ---------------------------------------------------------------------------
+# CMAKE_EXTRA_FLAGS (script-only, split on whitespace)
+# ---------------------------------------------------------------------------
+if [ -n "${CMAKE_EXTRA_FLAGS:-}" ]; then
     read -r -a EXTRA_ARGS <<< "$CMAKE_EXTRA_FLAGS"
     CMAKE_ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
-# Run CMake configuration
-cmake "${CMAKE_ARGS[@]}" -B build -G "$BUILD_SYSTEM"
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+echo "Build dir:  $BUILD_DIR"
+echo "Toolchain:  ${EFFECTIVE_TOOLCHAIN:-<native>}"
+echo "Generator:  ${BUILD_SYSTEM}"
+[ "$FORCE_FRESH" -eq 1 ] && echo "Fresh:      yes"
+
+CMAKE_FRESH=()
+[ "$FORCE_FRESH" -eq 1 ] && CMAKE_FRESH+=(--fresh)
+
+cmake -Wno-dev "${CMAKE_FRESH[@]}" "${CMAKE_ARGS[@]}" -B "$BUILD_DIR" -G "$BUILD_SYSTEM" || exit $?
+
+# Record the config signature so compile/tests know when to reconfigure.
+"$SCRIPT_DIR/lib/config-hash" "$BUILD_DIR" > "$BUILD_DIR/.fsc_config_hash"

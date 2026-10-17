@@ -1,8 +1,27 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Resolve the script's directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Remove the build directory
-rm -rf "$PROJECT_ROOT/build"
+shopt -s nullglob
+TARGETS=(
+    "$PROJECT_ROOT"/build
+    "$PROJECT_ROOT"/build-*
+    "$PROJECT_ROOT"/.build
+    "$PROJECT_ROOT"/.build-*
+    "$PROJECT_ROOT"/.clangd
+)
+
+if [ ${#TARGETS[@]} -eq 0 ]; then
+    echo "Nothing to clean."
+    exit 0
+fi
+
+for t in "${TARGETS[@]}"; do
+    [ -e "$t" ] || continue
+    echo "Removing $t"
+    rm -rf "$t"
+done
+
+echo "Clean complete."

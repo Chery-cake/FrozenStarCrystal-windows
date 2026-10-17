@@ -1,60 +1,98 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Resolve the script's directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-# Use FSC_CONFIG_FILE if set, otherwise default to $DIRENV_DIR/.fsc_config
 CONFIG_FILE="${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
 
 if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
     source "$CONFIG_FILE"
 fi
 
-# Resolve the script's directory and project root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+CLI_TOOLCHAIN=""
+CLI_TOOLCHAIN_SET=0
+BUILD_DIR_OVERRIDE=""
+CORES=""
+TARGET=""
 
-# Ensure the build directory is configured; if not, run build first
-if [ ! -f "$PROJECT_ROOT/build/CMakeCache.txt" ]; then
-    echo "Build directory not configured. Running build script first..."
-    "$SCRIPT_DIR/build"
-fi
-
-# Maximum number of cores available
-MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
-CORES="$MAX_CORES"
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case "$1" in
-    --cores)
-        CORES="$2"
-        shift 2
-        ;;
-    --target)
-        TARGET="$2"
-        shift 2
-        ;;
-    *)
-        echo "Unknown option: $1" >&2
-        echo "Usage: compile [--cores N] [--target name]"
-        exit 1
-        ;;
+        --cores)      CORES="$2"; shift 2 ;;
+        --target)     TARGET="$2"; shift 2 ;;
+        --toolchain)  CLI_TOOLCHAIN="$2"; CLI_TOOLCHAIN_SET=1; shift 2 ;;
+        --build-dir)  BUILD_DIR_OVERRIDE="$2"; shift 2 ;;
+        --help|-h)
+            cat <<EOF
+Usage: scripts/compile [--cores N] [--target name]
+                       [--toolchain <platform>] [--build-dir <path>]
+EOF
+            exit 0
+            ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
 
-# Clamp cores to maximum
+# ---------------------------------------------------------------------------
+# Effective toolchain + build dir (same rules as build)
+# ---------------------------------------------------------------------------
+EFFECTIVE_TOOLCHAIN="${TOOLCHAIN:-}"
+[ $CLI_TOOLCHAIN_SET -eq 1 ] && EFFECTIVE_TOOLCHAIN="$CLI_TOOLCHAIN"
+
+if [ -n "$BUILD_DIR_OVERRIDE" ]; then
+    BUILD_DIR="$BUILD_DIR_OVERRIDE"
+elif [ -n "$EFFECTIVE_TOOLCHAIN" ]; then
+    BUILD_DIR="$PROJECT_ROOT/build-$EFFECTIVE_TOOLCHAIN"
+else
+    BUILD_DIR="$PROJECT_ROOT/build"
+fi
+
+# ---------------------------------------------------------------------------
+# Reconcile CMake state with the current config.
+# ---------------------------------------------------------------------------
+RECONFIGURE=0
+FORCE_FRESH=0
+
+if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    echo "Build dir not configured — running build first..."
+    RECONFIGURE=1
+    FORCE_FRESH=1
+else
+    LAST_HASH=""
+    [ -f "$BUILD_DIR/.fsc_config_hash" ] && LAST_HASH="$(cat "$BUILD_DIR/.fsc_config_hash")"
+    CUR_HASH="$("$SCRIPT_DIR/lib/config-hash" "$BUILD_DIR")"
+    if [ "$LAST_HASH" != "$CUR_HASH" ]; then
+        echo "Config changed since last configure — forcing fresh configure..."
+        RECONFIGURE=1
+        FORCE_FRESH=1
+    fi
+fi
+
+if [ "$RECONFIGURE" -eq 1 ]; then
+    BUILD_FLAGS=(--build-dir "$BUILD_DIR")
+    [ -n "$EFFECTIVE_TOOLCHAIN" ] && BUILD_FLAGS+=(--toolchain "$EFFECTIVE_TOOLCHAIN")
+    [ "$FORCE_FRESH" -eq 1 ] && BUILD_FLAGS+=(--force)
+    "$SCRIPT_DIR/build" "${BUILD_FLAGS[@]}"
+fi
+
+# ---------------------------------------------------------------------------
+# Cores
+# ---------------------------------------------------------------------------
+MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+[ -z "$CORES" ] && CORES="$MAX_CORES"
 if [ "$CORES" -gt "$MAX_CORES" ]; then
-    echo "Warning: requested $CORES cores, but only $MAX_CORES available. Using $MAX_CORES."
+    echo "Warning: requested $CORES cores, only $MAX_CORES available."
     CORES="$MAX_CORES"
 fi
 
-# Build command
-BUILD_CMD=(cmake --build "$PROJECT_ROOT/build" --parallel "$CORES")
-if [ -n "$TARGET" ]; then
-    BUILD_CMD+=(--target "$TARGET")
-fi
+# ---------------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------------
+BUILD_CMD=(cmake --build "$BUILD_DIR" --parallel "$CORES")
+[ -n "$TARGET" ] && BUILD_CMD+=(--target "$TARGET")
 
 echo "Running: ${BUILD_CMD[*]}"
 "${BUILD_CMD[@]}"

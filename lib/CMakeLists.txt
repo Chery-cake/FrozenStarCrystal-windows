@@ -1,30 +1,32 @@
 # ==============================================================================
 # Dependencies - Main Configuration
 # ==============================================================================
-# Manages all external dependencies using FetchContent where feasible.
+# All third-party deps flow through CPM (loaded by fsc_initialize_project).
 # ==============================================================================
 
-include(FetchContent)
+CPMUsePackageLock("${CMAKE_CURRENT_SOURCE_DIR}/cmake/package-lock.cmake")
 
-# Set FetchContent options
-set(FETCHCONTENT_QUIET OFF)
-#set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-
-FetchContent_Declare(
-  frozenStarCrystal-graphics
-  GIT_REPOSITORY https://github.com/Chery-cake/FrozenStarCrystal-graphics.git
-  GIT_TAG master
-  #GIT_SHALLOW TRUE
-  GIT_PROGRESS TRUE
+# --- FSC graphics ------------------------------------------------------------
+# This is the window module's primary downstream dependency.
+# It transitively brings in SDL3 / SDL_image / SDL_ttf via its own lib/.
+fsc_cpm_or_local(FrozenStarCrystal-graphics
+    GITHUB_REPOSITORY Chery-cake/FrozenStarCrystal-graphics
+    GIT_TAG master
+    DOWNLOAD_AND_ADD_SUBDIRECTORY
+    OPTIONS
+        "ENABLE_TESTS OFF"
+        "FSC_TESTS OFF"
 )
-FetchContent_MakeAvailable(frozenStarCrystal-graphics)
+
+if(NOT TARGET FrozenStarCrystal-graphics)
+    message(FATAL_ERROR
+        "FrozenStarCrystal-graphics' CMakeLists.txt did not create a target "
+        "named 'FrozenStarCrystal-graphics'. See the earlier error message.")
+endif()
 
 # ==============================================================================
-# Include Subdirectory Configurations
+# Subsystem dependencies
 # ==============================================================================
-add_subdirectory(graphics)
-#add_subdirectory(math)
-#add_subdirectory(threading)
-#add_subdirectory(utility)
+add_subdirectory(windowing)
 
 message(STATUS "Dependencies configured successfully")

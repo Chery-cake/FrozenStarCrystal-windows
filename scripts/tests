@@ -1,88 +1,129 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Resolve the script's directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-
-# Use FSC_CONFIG_FILE if set, otherwise default to $DIRENV_DIR/.fsc_config
 CONFIG_FILE="${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
 
 if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck disable=SC1090
     source "$CONFIG_FILE"
 fi
 
-# Only proceed if ENABLE_TESTS is ON (case-insensitive)
-if [[ "${ENABLE_TESTS,,}" != "on" && "${ENABLE_TESTS^^}" != "ON" ]]; then
-    echo "Tests are disabled (ENABLE_TESTS=$ENABLE_TESTS)."
+if [[ "${ENABLE_TESTS:-OFF}" != "ON" ]]; then
+    echo "Tests are disabled (ENABLE_TESTS=${ENABLE_TESTS:-<unset>})."
     exit 1
 fi
 
-# Maximum number of cores available (for parallel test execution)
-MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
-
-# Default values
-CORES="$MAX_CORES"
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+CLI_TOOLCHAIN=""
+CLI_TOOLCHAIN_SET=0
+BUILD_DIR_OVERRIDE=""
+CORES=""
 VERBOSE=0
 FILTER=""
-OUTPUT_ON_FAILURE=1   # default to showing output only on failure
+OUTPUT_ON_FAILURE=1
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
     case "$1" in
-    --cores)
-        CORES="$2"
-        shift 2
-        ;;
-    --verbose|-V)
-        VERBOSE=1
-        shift
-        ;;
-    --filter|-R)
-        FILTER="$2"
-        shift 2
-        ;;
-    --no-output-on-failure)
-        OUTPUT_ON_FAILURE=0
-        shift
-        ;;
-    *)
-        echo "Unknown option: $1" >&2
-        echo "Usage: test [--cores N] [--verbose] [--filter <regex>] [--no-output-on-failure]"
-        exit 1
-        ;;
+        --cores)                 CORES="$2"; shift 2 ;;
+        --verbose|-V)            VERBOSE=1; shift ;;
+        --filter|-R)             FILTER="$2"; shift 2 ;;
+        --no-output-on-failure)  OUTPUT_ON_FAILURE=0; shift ;;
+        --toolchain)             CLI_TOOLCHAIN="$2"; CLI_TOOLCHAIN_SET=1; shift 2 ;;
+        --build-dir)             BUILD_DIR_OVERRIDE="$2"; shift 2 ;;
+        --help|-h)
+            cat <<EOF
+Usage: scripts/tests [--cores N] [--verbose] [--filter <regex>]
+                     [--no-output-on-failure]
+                     [--toolchain <platform>] [--build-dir <path>]
+EOF
+            exit 0
+            ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
 
-# Clamp cores to maximum
-if [ "$CORES" -gt "$MAX_CORES" ]; then
-    echo "Warning: requested $CORES cores, but only $MAX_CORES available. Using $MAX_CORES."
-    CORES="$MAX_CORES"
+# ---------------------------------------------------------------------------
+# Effective toolchain + build dir
+# ---------------------------------------------------------------------------
+EFFECTIVE_TOOLCHAIN="${TOOLCHAIN:-}"
+[ $CLI_TOOLCHAIN_SET -eq 1 ] && EFFECTIVE_TOOLCHAIN="$CLI_TOOLCHAIN"
+
+if [ -n "$BUILD_DIR_OVERRIDE" ]; then
+    BUILD_DIR="$BUILD_DIR_OVERRIDE"
+elif [ -n "$EFFECTIVE_TOOLCHAIN" ]; then
+    BUILD_DIR="$PROJECT_ROOT/build-$EFFECTIVE_TOOLCHAIN"
+else
+    BUILD_DIR="$PROJECT_ROOT/build"
 fi
 
-if [ ! -f "$PROJECT_ROOT/build/CTestTestfile.cmake" ]; then
-    echo "Test files don't exist. Running compile script first..."
-    "$SCRIPT_DIR/compile" --cores "$CORES" || {
-        echo "Compilation failed. Aborting tests."
+# ---------------------------------------------------------------------------
+# Cores
+# ---------------------------------------------------------------------------
+MAX_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+[ -z "$CORES" ] && CORES="$MAX_CORES"
+[ "$CORES" -gt "$MAX_CORES" ] && CORES="$MAX_CORES"
+
+# ---------------------------------------------------------------------------
+# Decide whether a compile is needed before running tests.
+# ---------------------------------------------------------------------------
+NEED_COMPILE=0
+
+if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    echo "Build dir not configured — running compile first..."
+    NEED_COMPILE=1
+elif [ ! -f "$BUILD_DIR/CTestTestfile.cmake" ]; then
+    echo "Tests not registered — running compile first..."
+    NEED_COMPILE=1
+else
+    LAST_HASH=""
+    [ -f "$BUILD_DIR/.fsc_config_hash" ] && LAST_HASH="$(cat "$BUILD_DIR/.fsc_config_hash")"
+    CUR_HASH="$("$SCRIPT_DIR/lib/config-hash" "$BUILD_DIR")"
+    if [ "$LAST_HASH" != "$CUR_HASH" ]; then
+        echo "Config changed since last test — running compile first..."
+        NEED_COMPILE=1
+    else
+        # CTestTestfile.cmake at the top level only contains subdirs() — the
+        # actual add_test(...) lines live in subdirectory files (e.g. tests/).
+        # Walk them all and extract the first registered executable path.
+        FIRST_TEST_EXE=$(find "$BUILD_DIR" -name 'CTestTestfile.cmake' -type f \
+            -exec grep -h -m1 '^add_test(' {} + 2>/dev/null | \
+            sed -n 's/^add_test([^ ]*[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+        if [ -n "$FIRST_TEST_EXE" ] && [ ! -e "$FIRST_TEST_EXE" ]; then
+            echo "Test binaries not built yet — running compile first..."
+            NEED_COMPILE=1
+        fi
+    fi
+fi
+
+if [ "$NEED_COMPILE" -eq 1 ]; then
+    COMPILE_FLAGS=(--cores "$CORES" --build-dir "$BUILD_DIR")
+    [ -n "$EFFECTIVE_TOOLCHAIN" ] && COMPILE_FLAGS+=(--toolchain "$EFFECTIVE_TOOLCHAIN")
+    "$SCRIPT_DIR/compile" "${COMPILE_FLAGS[@]}" || {
+        echo "Compilation failed."
         exit 1
     }
 fi
 
-# Build the ctest command
+# ---------------------------------------------------------------------------
+# ctest
+# ---------------------------------------------------------------------------
 if command -v perf >/dev/null 2>&1; then
-    CTEST_CMD=(perf stat ctest --test-dir "$PROJECT_ROOT/build" --parallel "$CORES")
+    CTEST_CMD=(perf stat ctest --test-dir "$BUILD_DIR" --parallel "$CORES")
 else
-    CTEST_CMD=(ctest --test-dir "$PROJECT_ROOT/build" --parallel "$CORES")
+    CTEST_CMD=(ctest --test-dir "$BUILD_DIR" --parallel "$CORES")
 fi
 
-if [ $VERBOSE -eq 1 ]; then
+if   [ $VERBOSE -eq 1 ]; then
     CTEST_CMD+=(--verbose)
 elif [ $OUTPUT_ON_FAILURE -eq 1 ]; then
     CTEST_CMD+=(--output-on-failure)
 fi
 
-if [ -n "$FILTER" ]; then
-    CTEST_CMD+=(-R "$FILTER")
-fi
+[ -n "$FILTER" ] && CTEST_CMD+=(-R "$FILTER")
 
 echo "Running: ${CTEST_CMD[*]}"
 "${CTEST_CMD[@]}"

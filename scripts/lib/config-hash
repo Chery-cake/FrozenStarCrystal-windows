@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Emits a stable hash of the current .fsc_config that affects the CMake invocation.
+# Usage: scripts/lib/config-hash <build-dir>
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+CONFIG_FILE="${FSC_CONFIG_FILE:-$PROJECT_ROOT/.fsc_config}"
+
+BUILD_DIR="${1:?build dir required}"
+
+# Same schema extraction as scripts/build, so the hash only includes vars that
+# actually flow into `-D<VAR>=<value>` for CMake.
+SCRIPT_ONLY=()
+for src in "$PROJECT_ROOT/scripts/settings" "$PROJECT_ROOT/scripts/.schema"; do
+    [ -f "$src" ] || continue
+    while IFS='|' read -r var _ _ forward; do
+        [ "$forward" = "NO" ] && SCRIPT_ONLY+=("$var")
+    done < <(sed -n 's/^ *"\([A-Z_][A-Z0-9_]*\)|\([^|]*\)|\([^|]*\)|\([A-Z]*\)".*/\1|\2|\3|\4/p' "$src")
+done
+
+_is_script_only() {
+    local v="$1"
+    for s in "${SCRIPT_ONLY[@]}"; do [ "$s" = "$v" ] && return 0; done
+    return 1
+}
+
+# Read the config, filter to forwarded vars, sort, hash.
+{
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+    while read -r var; do
+        _is_script_only "$var" && continue
+        printf '%s=%s\n' "$var" "${!var}"
+    done < <(sed -n 's/^export \([A-Z_][A-Z0-9_]*\)=.*/\1/p' "$CONFIG_FILE")
+} | sort | sha256sum | awk '{print $1}'
